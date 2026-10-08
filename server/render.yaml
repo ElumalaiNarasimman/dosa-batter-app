@@ -1,0 +1,38 @@
+# Render Blueprint for the Dosa Batter payments backend.
+#
+# This provisions a single free-tier Node web service. Render reads this file
+# when you create a "Blueprint" from your Git repo (New + -> Blueprint).
+#
+# IMPORTANT (secrets): the payment credentials below are declared with
+# `sync: false`, which means Render will PROMPT you to type each value in the
+# dashboard at deploy time and store it encrypted. They are deliberately NOT
+# committed to git. Never put real keys in this file.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: dosa-batter-payments
+    runtime: node
+    plan: free
+    # rootDir lets Render build from the server/ subfolder even though the repo
+    # root is the Expo app. Adjust if you move this file.
+    rootDir: dosa-batter-app/server
+    buildCommand: npm ci
+    startCommand: npm start
+    # Render performs health checks and keeps the service healthy via this path.
+    healthCheckPath: /health
+    # Pick the region closest to your buyers. Options include: oregon,
+    # frankfurt, singapore, ohio, virginia. EUR app -> frankfurt is sensible.
+    region: frankfurt
+    envVars:
+      # Render injects PORT automatically; index.js already honours it, so we
+      # do NOT set PORT here.
+      - key: PAYPAL_ENV
+        value: live # change to 'sandbox' while testing with fake money
+      - key: PAYPAL_CLIENT_ID
+        sync: false # you will be prompted; stored encrypted
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false

@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Dosa Batter",
+    "slug": "dosa-batter-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "dosabatter",
+    "splash": {
+      "backgroundColor": "#FFF7ED"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dosabatter.app"
+    },
+    "android": {
+      "package": "com.dosabatter.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#FFF7ED"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "apiUrl": "https://REPLACE-WITH-YOUR-BACKEND-URL",
+      "eas": {
+        "projectId": "f3cb4c0c-6a36-4d10-8fae-20ad7aeb5876"
+      }
+    },
+    "owner": "elu_expo",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f3cb4c0c-6a36-4d10-8fae-20ad7aeb5876"
+    }
+  }
+}
