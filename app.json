@@ -31,7 +31,7 @@
       "expo-web-browser"
     ],
     "extra": {
-      "apiUrl": "https://REPLACE-WITH-YOUR-BACKEND-URL",
+      "apiUrl": "https://dosa-batter-payments.onrender.com",
       "eas": {
         "projectId": "f3cb4c0c-6a36-4d10-8fae-20ad7aeb5876"
       }

@@ -1,0 +1,33 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+# Editor-based HTTP Client requests
+/httpRequests/
+# Ignored default folder with query files
+/queries/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml
+.idea/*
+
+# ---- Node / Expo / build artifacts ----
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Native build output
+android/
+ios/
+
+# Env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# EAS
+.easignore

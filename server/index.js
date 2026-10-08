@@ -14,6 +14,7 @@ const {
   getCheckoutSession,
   isConfigured: stripeConfigured,
 } = require('./stripe');
+const db = require('./db');
 
 const app = express();
 app.use(cors());
@@ -139,6 +140,119 @@ app.get('/api/stripe/session/:sessionId', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Dosa payments backend listening on http://localhost:${PORT} (PayPal: ${PAYPAL_ENV})`);
+// ---------------------------------------------------------------------------
+// Orders (persisted in Postgres so the owner app sees customer orders)
+// ---------------------------------------------------------------------------
+
+// Minimal validation of the order payload the customer app sends. We trust the
+// client shape here for brevity; a hardened build would recompute totals and
+// validate the cart server-side.
+function validateOrderPayload(body) {
+  if (!body || typeof body !== 'object') return 'Order body is required.';
+  if (typeof body.id !== 'string' || !body.id) return 'Order id is required.';
+  if (typeof body.total !== 'number' || !(body.total >= 0)) return 'A numeric total is required.';
+  if (!Array.isArray(body.lines) || body.lines.length === 0) return 'Order lines are required.';
+  if (!body.customer || typeof body.customer !== 'object') return 'Customer is required.';
+  if (!body.pickup || typeof body.pickup !== 'object') return 'Pickup is required.';
+  return null;
+}
+
+// Create / save an order (called by the customer app on checkout).
+app.post('/api/orders', async (req, res) => {
+  try {
+    const problem = validateOrderPayload(req.body);
+    if (problem) return res.status(400).json({ error: problem });
+
+    const order = await db.insertOrder({
+      id: req.body.id,
+      createdAt: req.body.createdAt ?? Date.now(),
+      total: req.body.total,
+      status: req.body.status ?? 'placed',
+      paymentMethod: req.body.paymentMethod ?? 'cash',
+      paymentStatus: req.body.paymentStatus ?? 'pending',
+      customer: req.body.customer,
+      pickup: req.body.pickup,
+      lines: req.body.lines,
+    });
+    res.status(201).json(order);
+  } catch (err) {
+    if (err?.code === 'DB_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message });
+    }
+    safeLogError('insertOrder failed:', err);
+    res.status(500).json({ error: 'Could not save the order.' });
+  }
 });
+
+// List all orders (polled by the owner app).
+app.get('/api/orders', async (_req, res) => {
+  try {
+    const orders = await db.listOrders();
+    res.json(orders);
+  } catch (err) {
+    if (err?.code === 'DB_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message });
+    }
+    safeLogError('listOrders failed:', err);
+    res.status(500).json({ error: 'Could not load orders.' });
+  }
+});
+
+// Update an order's status (owner advances placed -> preparing -> ready ...).
+app.patch('/api/orders/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const allowed = ['placed', 'preparing', 'ready', 'completed'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
+    }
+    const updated = await db.updateOrderStatus(req.params.id, status);
+    if (!updated) return res.status(404).json({ error: 'Order not found.' });
+    res.json(updated);
+  } catch (err) {
+    if (err?.code === 'DB_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message });
+    }
+    safeLogError('updateOrderStatus failed:', err);
+    res.status(500).json({ error: 'Could not update the order.' });
+  }
+});
+
+// Update an order's payment status (e.g. after a Stripe payment is confirmed).
+app.patch('/api/orders/:id/payment', async (req, res) => {
+  try {
+    const { paymentStatus } = req.body;
+    const allowed = ['pending', 'paid'];
+    if (!allowed.includes(paymentStatus)) {
+      return res.status(400).json({ error: `paymentStatus must be one of: ${allowed.join(', ')}` });
+    }
+    const updated = await db.updateOrderPaymentStatus(req.params.id, paymentStatus);
+    if (!updated) return res.status(404).json({ error: 'Order not found.' });
+    res.json(updated);
+  } catch (err) {
+    if (err?.code === 'DB_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message });
+    }
+    safeLogError('updateOrderPaymentStatus failed:', err);
+    res.status(500).json({ error: 'Could not update the order.' });
+  }
+});
+
+// Bind to 0.0.0.0 so a phone on the same Wi-Fi (Expo Go) can reach the server
+// via the laptop's LAN IP, not just localhost on the laptop itself.
+// Initialise the DB schema first (no-op when DATABASE_URL is unset), then boot.
+db.init()
+  .catch((err) => {
+    // Don't crash the whole server if schema init fails - payments can still
+    // work. Order endpoints will surface the error per-request.
+    console.error('[db] init failed:', err?.code ?? err?.message);
+  })
+  .finally(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(
+        `Dosa payments backend listening on http://0.0.0.0:${PORT} ` +
+          `(reachable on your LAN IP:${PORT}) ` +
+          `(PayPal: ${PAYPAL_ENV}, orders DB: ${db.isConfigured ? 'on' : 'off'})`
+      );
+    });
+  });

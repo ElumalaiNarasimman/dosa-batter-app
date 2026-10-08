@@ -21,7 +21,7 @@ import { createStripeCheckout, fetchStripeSession } from '../data/stripeApi';
 import { formatLongDate } from '../data/pickup';
 import { RootStackParamList } from '../navigation/types';
 import { colors } from '../theme';
-import { WEB_APP_URL } from '../config';
+import { WEB_APP_URL, PAYPAL_ENABLED } from '../config';
 import PayPalButton from '../components/PayPalButton';
 
 // Pull the Stripe session id out of a return URL (web or native deep link).
@@ -32,12 +32,17 @@ function sessionIdFromUrl(url: string): string | null {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Payment'>;
 
-const METHODS: PaymentMethod[] = ['paypal', 'stripe', 'cash'];
+// PayPal is behind a feature flag (see config.ts). While disabled it is dropped
+// from the selectable methods so the app offers card (Stripe) and cash only.
+const METHODS: PaymentMethod[] = (
+  ['paypal', 'stripe', 'cash'] as PaymentMethod[]
+).filter((m) => m !== 'paypal' || PAYPAL_ENABLED);
 
 export default function PaymentScreen({ route, navigation }: Props) {
   const { draft } = route.params;
   const { lines, total, placeOrder } = useCart();
-  const [method, setMethod] = useState<PaymentMethod>('paypal');
+  // Default to the first available method (Stripe when PayPal is disabled).
+  const [method, setMethod] = useState<PaymentMethod>(METHODS[0]);
   const [processing, setProcessing] = useState(false);
 
   const pickupDate = new Date(draft.pickup.dateISO);
@@ -58,8 +63,10 @@ export default function PaymentScreen({ route, navigation }: Props) {
     navigation.replace('OrderTracking', { orderId: order.id });
   };
 
-  // Place the pending Stripe order (empties cart). Called only AFTER Stripe has
-  // accepted the session, so a failed checkout leaves the cart intact.
+  // Place the pending Stripe order BEFORE the web redirect so StripeReturnHandler
+  // can find it. keepCart: true means the cart is never emptied by this flow -
+  // the buyer keeps their items whether the payment succeeds, fails, or is
+  // cancelled. Only a confirmed payment is treated as a successful order.
   const placePendingStripeOrder = () =>
     placeOrder({
       lines,
@@ -68,6 +75,7 @@ export default function PaymentScreen({ route, navigation }: Props) {
       pickup: draft.pickup,
       paymentMethod: 'stripe',
       paymentStatus: 'pending',
+      keepCart: true,
     });
 
   // Real Stripe. Two platform flows:

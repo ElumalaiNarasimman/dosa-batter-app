@@ -12,6 +12,11 @@ import {
   STATUS_META,
   shortOrderId,
 } from '../data/orders';
+import {
+  createRemoteOrder,
+  fetchRemoteOrders,
+  updateRemoteOrderStatus,
+} from '../data/ordersApi';
 
 export interface CartLine {
   product: Product;
@@ -32,7 +37,8 @@ type StoreAction =
   | { type: 'DECREMENT'; productId: string }
   | { type: 'REMOVE'; productId: string }
   | { type: 'CLEAR' }
-  | { type: 'PLACE_ORDER'; order: Order; notifications: AppNotification[] }
+  | { type: 'PLACE_ORDER'; order: Order; notifications: AppNotification[]; keepCart?: boolean }
+  | { type: 'SYNC_ORDERS'; orders: Order[] }
   | { type: 'SET_STATUS'; orderId: string; status: OrderStatus; notification: AppNotification }
   | { type: 'MARK_PAID'; orderId: string }
   | { type: 'REMOVE_ORDER'; orderId: string }
@@ -46,10 +52,11 @@ const initialState: StoreState = {
   role: 'customer',
 };
 
-// Persist orders/notifications/role across reloads. This matters on web because
-// paying through Stripe triggers a full-page redirect that would otherwise wipe
-// the in-memory store (losing the just-placed order). The cart `lines` are
-// intentionally NOT persisted - a reload should start with an empty cart.
+// Persist cart/orders/notifications/role across reloads. This matters on web
+// because paying through Stripe triggers a full-page redirect that wipes the
+// in-memory store. We persist `lines` too so that cancelling a Stripe payment
+// returns to the Payment screen with the cart intact (the web flow only clears
+// the cart on CONFIRMED success).
 const PERSIST_KEY = 'dosa-store-v1';
 
 function loadPersisted(): StoreState {
@@ -59,7 +66,7 @@ function loadPersisted(): StoreState {
     if (!raw) return initialState;
     const saved = JSON.parse(raw) as Partial<StoreState>;
     return {
-      lines: {},
+      lines: saved.lines ?? {},
       orders: saved.orders ?? [],
       notifications: saved.notifications ?? [],
       role: saved.role ?? 'customer',
@@ -72,10 +79,10 @@ function loadPersisted(): StoreState {
 function savePersisted(state: StoreState): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
-    const { orders, notifications, role } = state;
+    const { lines, orders, notifications, role } = state;
     window.localStorage.setItem(
       PERSIST_KEY,
-      JSON.stringify({ orders, notifications, role })
+      JSON.stringify({ lines, orders, notifications, role })
     );
   } catch {
     // storage full / unavailable - non-fatal, state just won't persist
@@ -117,10 +124,24 @@ function storeReducer(state: StoreState, action: StoreAction): StoreState {
     case 'PLACE_ORDER':
       return {
         ...state,
-        lines: {},
+        // Clear the cart unless the caller wants to keep it. The web Stripe flow
+        // keeps it so a cancel / browser-back doesn't lose the cart before the
+        // payment is actually confirmed; it is cleared on confirmed success.
+        lines: action.keepCart ? state.lines : {},
         orders: [action.order, ...state.orders],
         notifications: [...action.notifications, ...state.notifications],
       };
+    case 'SYNC_ORDERS': {
+      // Replace the order list with the server's authoritative copy (owner
+      // polling). Merge any purely-local orders not yet on the server so a
+      // just-placed order never flickers out before its POST lands.
+      const serverIds = new Set(action.orders.map((o) => o.id));
+      const localOnly = state.orders.filter((o) => !serverIds.has(o.id));
+      const merged = [...action.orders, ...localOnly].sort(
+        (a, b) => b.createdAt - a.createdAt
+      );
+      return { ...state, orders: merged };
+    }
     case 'MARK_PAID': {
       const orders = state.orders.map((o) =>
         o.id === action.orderId ? { ...o, paymentStatus: 'paid' as const } : o
@@ -163,6 +184,10 @@ export interface PlaceOrderInput {
   customer: Customer;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  // When true, the cart is NOT emptied on placing the order. Used by the web
+  // Stripe flow, which must create a pending order before redirecting but keep
+  // the cart so a cancel/back doesn't lose it before payment is confirmed.
+  keepCart?: boolean;
 }
 
 interface StoreContextValue {
@@ -206,6 +231,31 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     savePersisted(state);
   }, [state]);
+
+  // All builds poll the shared server so order changes propagate between
+  // devices without a manual refresh:
+  //  - owner sees newly placed customer orders, and
+  //  - customer sees status changes the owner makes (placed -> preparing ...).
+  // The server copy is authoritative; SYNC_ORDERS merges in any purely-local
+  // order whose POST hasn't landed yet, so nothing flickers out.
+  useEffect(() => {
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const remote = await fetchRemoteOrders();
+        if (!cancelled) dispatch({ type: 'SYNC_ORDERS', orders: remote });
+      } catch {
+        // Server unreachable / not configured - keep showing local state.
+      }
+    };
+
+    sync(); // immediate first fetch
+    const timer = setInterval(sync, 10000); // then every 10s
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   const value = useMemo<StoreContextValue>(() => {
     const lines = Object.values(state.lines);
@@ -262,11 +312,39 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           type: 'PLACE_ORDER',
           order,
           notifications: [ownerNote, customerNote],
+          keepCart: input.keepCart,
         });
+        // Only push the order to the shared server (so the owner sees it) when
+        // it is a REAL order. An online order that hasn't been paid yet
+        // (stripe/paypal + pending) is just a placeholder created before the
+        // payment redirect - it must NOT reach the owner unless/until payment
+        // is confirmed (that happens in markPaid). Cash orders are real at
+        // placement (pay at pickup), so they sync immediately.
+        const isUnpaidOnlineOrder =
+          order.paymentStatus !== 'paid' && order.paymentMethod !== 'cash';
+        if (!isUnpaidOnlineOrder) {
+          // Best-effort: the local order is already placed, so a network/server
+          // failure here must not break checkout.
+          createRemoteOrder(order).catch((err) => {
+            console.warn('[orders] failed to sync new order to server:', err?.message);
+          });
+        }
         return order;
       },
       getOrder: (orderId) => state.orders.find((o) => o.id === orderId),
-      markPaid: (orderId) => dispatch({ type: 'MARK_PAID', orderId }),
+      markPaid: (orderId) => {
+        dispatch({ type: 'MARK_PAID', orderId });
+        // Payment is now confirmed, so this is the moment the order becomes
+        // real: push it to the shared server (as paid) so the owner sees it.
+        // For online orders this is the FIRST time it reaches the server - the
+        // unpaid placeholder was intentionally never synced.
+        const order = state.orders.find((o) => o.id === orderId);
+        if (order) {
+          createRemoteOrder({ ...order, paymentStatus: 'paid' }).catch((err) => {
+            console.warn('[orders] failed to sync paid order to server:', err?.message);
+          });
+        }
+      },
       removeOrder: (orderId) => dispatch({ type: 'REMOVE_ORDER', orderId }),
       setStatus: (orderId, status) => {
         const order = state.orders.find((o) => o.id === orderId);
@@ -282,6 +360,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           read: false,
         };
         dispatch({ type: 'SET_STATUS', orderId, status, notification: note });
+        // Persist the status change to the shared server (owner action).
+        updateRemoteOrderStatus(orderId, status).catch((err) => {
+          console.warn('[orders] failed to sync status change:', err?.message);
+        });
       },
 
       role: state.role,

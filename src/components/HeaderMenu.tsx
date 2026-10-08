@@ -12,6 +12,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useApp } from '../state/CartContext';
 import { RootStackParamList } from '../navigation/types';
 import { colors } from '../theme';
+import { APP_MODE } from '../config';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -93,14 +94,16 @@ export default function HeaderMenu() {
               </TouchableOpacity>
             ))}
 
-            <View style={styles.divider} />
-            <TouchableOpacity style={styles.roleSwitch} onPress={switchRole}>
-              <Text style={styles.roleSwitchText}>
-                {role === 'owner'
-                  ? 'Switch to customer view'
-                  : 'Switch to owner view'}
-              </Text>
-            </TouchableOpacity>
+            {!APP_MODE && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity style={styles.roleSwitch} onPress={switchRole}>
+                  <Text style={styles.roleSwitchText}>
+                    {role === 'owner' ? 'Switch to customer view' : 'Switch to owner view'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
           </Pressable>
         </Pressable>
       </Modal>

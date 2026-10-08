@@ -7,6 +7,12 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "owner": "EXPO_PUBLIC_APP_MODE=owner expo start",
+    "owner:web": "EXPO_PUBLIC_APP_MODE=owner expo start --web",
+    "customer": "EXPO_PUBLIC_APP_MODE=customer expo start",
+    "customer:web": "EXPO_PUBLIC_APP_MODE=customer expo start --web",
+    "build:owner": "eas build --profile preview:owner --platform android",
+    "build:customer": "eas build --profile preview:customer --platform android",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

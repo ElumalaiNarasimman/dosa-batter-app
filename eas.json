@@ -18,6 +18,24 @@
         "buildType": "apk"
       }
     },
+    "preview:owner": {
+      "extends": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_MODE": "owner"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview:customer": {
+      "extends": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_MODE": "customer"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "production": {
       "channel": "production",
       "autoIncrement": true,

@@ -16,8 +16,9 @@ services:
     runtime: node
     plan: free
     # rootDir lets Render build from the server/ subfolder even though the repo
-    # root is the Expo app. Adjust if you move this file.
-    rootDir: dosa-batter-app/server
+    # root is the Expo app. This repo's root IS the Expo app, so the server is
+    # at "server". Adjust if you restructure the repo.
+    rootDir: server
     buildCommand: npm ci
     startCommand: npm start
     # Render performs health checks and keeps the service healthy via this path.
@@ -28,11 +29,33 @@ services:
     envVars:
       # Render injects PORT automatically; index.js already honours it, so we
       # do NOT set PORT here.
-      - key: PAYPAL_ENV
-        value: live # change to 'sandbox' while testing with fake money
-      - key: PAYPAL_CLIENT_ID
-        sync: false # you will be prompted; stored encrypted
-      - key: PAYPAL_CLIENT_SECRET
-        sync: false
+      #
+      # This app runs Stripe-only (PayPal is disabled in the client), so the
+      # only secret Render needs is STRIPE_SECRET_KEY. The PayPal vars are
+      # intentionally NOT declared here: declaring a `sync: false` var makes
+      # Render prompt for it, so omitting them stops the PayPal prompts. The
+      # server treats missing PayPal credentials as "not configured", which is
+      # harmless while PayPal is off. To re-enable PayPal later, add
+      # PAYPAL_ENV / PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET back here.
       - key: STRIPE_SECRET_KEY
-        sync: false
+        sync: false # REQUIRED: your Stripe secret key (sk_test_... or sk_live_...)
+      # DATABASE_URL is wired automatically from the managed Postgres instance
+      # declared under `databases:` below - Render injects the connection string,
+      # so there is nothing to type. The server (db.js) reads this to persist
+      # orders so the owner app sees customer orders.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dosa-batter-db
+          property: connectionString
+
+# Managed PostgreSQL for order persistence. Render provisions this alongside the
+# web service when you apply the Blueprint. Free tier is fine for testing; note
+# Render expires free databases after a period, so use a paid plan for anything
+# long-lived.
+databases:
+  - name: dosa-batter-db
+    plan: free
+    # NOTE: the Blueprint `databases` entry does NOT accept a `region` field
+    # (that's only valid on services). Including it makes the Blueprint fail to
+    # sync. Render places the DB in the workspace's default region; set the
+    # region in the dashboard if you need to pin it.
